@@ -68,6 +68,6 @@ You need JDK 25 and the Android SDK with platform 37.
 
 1. Run the guided flow with the camera on a real TV (first: Galaxy S25+ and an LG), and check the
    Quick check video syncs with the RAW meter's pace.
-2. Keep the calibration between launches, and add upstream's other brands, HDR10 and fine-tuning.
+2. Add upstream's other brands, HDR10 and fine-tuning.
 3. Real camera profiles: a Lab mode that pairs with upstream's `mac-lab` tool, with a colorimeter or
    a profiled iPhone as the reference.

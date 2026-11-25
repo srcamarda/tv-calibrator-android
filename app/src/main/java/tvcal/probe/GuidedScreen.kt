@@ -121,25 +121,32 @@ sealed class SweepPhase {
 
 data class PatchProgress(val id: String, val name: String, val kind: PatchKind, val bigY: Double? = null, val done: Boolean = false)
 
-/** One guided calibration: the steps, the measurements, the meters. Lives as long as the app's screen. */
+/**
+ * One guided calibration: the steps, the measurements, the meters. Lives as long as the app's screen, and
+ * is saved after every change ([GuideStore]), one file per meter: the camera on the real TV, the demo TV.
+ */
 class GuidedFlow(private val context: Context, private val manager: CameraManager) {
     val hdr = false
     val mode: SignalMode = SignalMode.fromId("sdr")!!
     val plan: GuidePlan = GuidePlan.forHDR(hdr)
 
     var demo by mutableStateOf(true)
+        private set
     var step by mutableStateOf(GuideStep.SETUP)
         private set
     val done = mutableStateListOf<GuideStep>()
-    var before by mutableStateOf<Measurements?>(null)
-        private set
-    var after by mutableStateOf<Measurements?>(null)
-        private set
+    /** Calibration sessions, oldest first: the last one is the current one. */
+    val sessions = mutableStateListOf<GuideSession>()
+    val before: Measurements? get() = sessions.lastOrNull()?.before
+    val after: Measurements? get() = sessions.lastOrNull()?.after
+    private var checkMeas by mutableStateOf<Measurements?>(null)
     var check by mutableStateOf<Report?>(null)
         private set
     val limits = mutableStateListOf<String>()
     val coloursDone = mutableStateListOf<String>()
     var colour by mutableStateOf("RED")
+        private set
+    private var demoSeed = 7L
 
     // following a video
     var phase by mutableStateOf<SweepPhase>(SweepPhase.Idle)
@@ -162,7 +169,7 @@ class GuidedFlow(private val context: Context, private val manager: CameraManage
     var restart by mutableIntStateOf(0)
 
     // the demo TV, and remote presses (which redraw the controls)
-    var tv by mutableStateOf(SimTV(hdr))
+    var tv by mutableStateOf(SimTV(hdr, seed = 7))
         private set
     var tvVersion by mutableIntStateOf(0)
         private set
@@ -186,40 +193,100 @@ class GuidedFlow(private val context: Context, private val manager: CameraManage
     /** Red, green and blue of the Before round: they make the colour hints exact. */
     val basis: List<Vec3>? get() = before?.let { b -> listOf("RED", "GREEN", "BLUE").mapNotNull { b[it] }.takeIf { it.size == 3 } }
 
+    init { load() }
+
+    // MARK: saving
+
+    /** Takes up the saved calibration of the current meter. */
+    private fun load() {
+        val s = GuideStore.load(context, demo)
+        step = s.step
+        done.clear(); done += s.done
+        limits.clear(); limits += s.limits
+        coloursDone.clear(); coloursDone += s.coloursDone
+        colour = s.colour
+        checkMeas = s.check
+        check = s.check?.let { Analysis.analyse(it, hdr) }
+        sessions.clear(); sessions += s.sessions
+        phase = SweepPhase.Idle
+        if (demo) {
+            demoSeed = s.demoSeed
+            tv = SimTV(hdr, seed = demoSeed).also { it.s.ctrl.putAll(s.demoCtrl) }
+            demoLive = SimLiveMeter(tv, shown)
+            tvVersion++
+        }
+    }
+
+    private fun save() {
+        val state = GuideState(
+            step = step, done = done.toList(), limits = limits.toList(), coloursDone = coloursDone.toList(),
+            colour = colour, check = checkMeas, sessions = sessions.toList(),
+            demoSeed = demoSeed, demoCtrl = if (demo) tv.s.ctrl.toMap() else emptyMap(),
+        )
+        GuideStore.save(context, demo, state)
+    }
+
+    /** The demo TV or the camera: each has its own saved calibration. */
+    fun useDemo(d: Boolean) {
+        if (d == demo) return
+        cancel()
+        save()
+        demo = d
+        load()
+    }
+
+    // MARK: moving through the steps
+
     fun go(to: GuideStep, markDone: GuideStep? = null) {
         if (markDone != null && markDone !in done) done += markDone
         if (running) cancel()
         if (phase is SweepPhase.Failed) phase = SweepPhase.Idle
         step = to
+        save()
     }
 
-    fun markLimit(key: String) { if (key !in limits) limits += key }
+    fun markLimit(key: String) {
+        if (key !in limits) limits += key
+        save()
+    }
+
+    fun pickColour(c: String) {
+        colour = c
+        save()
+    }
 
     fun press(key: String, delta: Int) {
         tv.apply(mapOf(key to delta))
         tvVersion++
+        save()
     }
 
-    /** A new TV, to try the demo from scratch. */
+    /** A new demo TV, with other errors, to try the demo from scratch. */
     fun newDemoTV() {
-        tv = SimTV(hdr, seed = System.nanoTime() % 1000)
+        demoSeed = System.nanoTime() % 1000
+        tv = SimTV(hdr, seed = demoSeed)
         demoLive = SimLiveMeter(tv, shown)
         tvVersion++
+        save()
     }
 
+    /** Start a new session: again from the Before check. The finished sessions stay in the history. */
     fun startOver() {
         cancel()
-        before = null; after = null; check = null
-        done.clear(); limits.clear(); coloursDone.clear()
+        done.clear(); done += GuideStep.SETUP
+        limits.clear(); coloursDone.clear()
         colour = "RED"
+        checkMeas = null; check = null
+        sessions += GuideSession()
         phase = SweepPhase.Idle
-        step = GuideStep.SETUP
+        step = GuideStep.BEFORE
+        save()
     }
 
     fun finishColour(c: String) {
         if (c !in coloursDone) coloursDone += c
         val rest = Patterns.colourIDs.filter { it !in coloursDone }
-        if (rest.isEmpty()) go(GuideStep.AFTER, markDone = GuideStep.COLOURS) else colour = rest.first()
+        if (rest.isEmpty()) go(GuideStep.AFTER, markDone = GuideStep.COLOURS) else { colour = rest.first(); save() }
     }
 
     fun cancel() {
@@ -255,12 +322,24 @@ class GuidedFlow(private val context: Context, private val manager: CameraManage
                 phase = SweepPhase.Failed(MeasureError.OutOfOrder.message ?: "Out of order.")
                 return
             }
+            val now = System.currentTimeMillis()
             when (which) {
-                GuideStep.BEFORE -> { before = meas; after = null }
-                GuideStep.AFTER -> { after = meas; if (GuideStep.AFTER !in done) done += GuideStep.AFTER }
-                else -> check = Analysis.analyse(meas, hdr)
+                GuideStep.BEFORE -> {
+                    // fill a fresh session (from Start a new session), or start one
+                    val last = sessions.lastOrNull()
+                    if (last != null && last.before == null && last.after == null) sessions[sessions.size - 1] = last.copy(before = meas, started = now)
+                    else sessions += GuideSession(started = now, before = meas)
+                }
+                GuideStep.AFTER -> {
+                    // measuring After again: keep comparing with the same starting point
+                    if (sessions.isEmpty() || sessions.last().after != null) sessions += GuideSession(started = now, before = sessions.lastOrNull()?.before)
+                    sessions[sessions.size - 1] = sessions.last().copy(after = meas, finished = now)
+                    if (GuideStep.AFTER !in done) done += GuideStep.AFTER
+                }
+                else -> { checkMeas = meas; check = Analysis.analyse(meas, hdr) }
             }
             phase = SweepPhase.Done
+            save()
         } catch (e: CancellationException) {
             phase = SweepPhase.Cancelled
             throw e
@@ -359,9 +438,9 @@ fun GuidedScreen(flow: GuidedFlow) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Badge("Demo TV", Tc.tealBright, flow.demo) { flow.cancel(); flow.demo = true }
+                Badge("Demo TV", Tc.tealBright, flow.demo) { flow.useDemo(true) }
                 Badge("Camera", Tc.tealBright, !flow.demo) {
-                    flow.cancel(); flow.demo = false
+                    flow.useDemo(false)
                     if (!granted) ask.launch(Manifest.permission.CAMERA)
                 }
                 Spacer(Modifier.weight(1f))
@@ -475,7 +554,13 @@ private fun SetupStep(flow: GuidedFlow, whiteRefSet: Boolean): Pair<String, () -
         TipRow(Tone.LIMIT, "A camera reference is set on a Filmmaker Mode white. Measuring that same mode, its white reads on " +
             "target by definition: the greys' balance and the colours still say something, the white point doesn't.")
     }
-    if (flow.demo) TipRow(Tone.TODO, "Demo: a made-up TV with white-balance and colour errors. Its remote is on each step.")
+    if (flow.demo) {
+        TipRow(Tone.TODO, "Demo: a made-up TV with white-balance and colour errors. Its remote is on each step.")
+        LinkButton("Try another demo TV", { flow.newDemoTV() }, small = true)
+    }
+    History(flow)
+    val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() }
+    Text("TV Cal Probe ${version ?: ""}", Modifier.fillMaxWidth(), style = TcType.tiny.copy(color = Tc.textSecondary))
     return "Start: measure the TV as it is" to { flow.go(GuideStep.BEFORE, markDone = GuideStep.SETUP) }
 }
 
@@ -700,8 +785,30 @@ private fun ColoursStep(flow: GuidedFlow): Pair<String, () -> Unit> {
     if (!flow.demo) PlayCard("Show on the TV", Patterns.packFile(flow.mode, cur) ?: cur, "From the USB stick (patterns/pack).")
     val r = flow.live?.takeIf { it.id == cur }
     ColourStep(patch, flow.hdr, r, flow.liveError, flow.demo, flow.whiteY,
-        onPick = { flow.colour = it }, onRestart = { flow.restart++ }, onPress = flow::press, doneColours = flow.coloursDone.toSet())
+        onPick = { flow.pickColour(it) }, onRestart = { flow.restart++ }, onPress = flow::press, doneColours = flow.coloursDone.toSet())
     LinkButton("Can't get closer", { flow.markLimit(cur); flow.finishColour(cur) })
     val last = Patterns.colourIDs.all { it == cur || it in flow.coloursDone }
     return (if (last) "Finish colours" else "Next colour") to { flow.finishColour(cur) }
+}
+
+/** Finished calibrations, newest first: when, and the greyscale and colour scores before and after. */
+@Composable
+private fun History(flow: GuidedFlow) {
+    val finished = flow.sessions.filter { it.after != null }.reversed()
+    if (finished.isEmpty()) return
+    val date = remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT) }
+    TcCard(spacing = 10.dp) {
+        Text(if (flow.demo) "Demo calibrations" else "Your calibrations", style = TcType.bodyStrong)
+        for (ss in finished) {
+            val a = Analysis.analyse(ss.after!!, flow.hdr)
+            val b = ss.before?.let { Analysis.analyse(it, flow.hdr) }
+            fun pair(now: Double, was: Double?) = (was?.let { "${fmt(it, 1)} → " } ?: "") + fmt(now, 1)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(date.format(java.util.Date(ss.finished ?: ss.started)), style = TcType.caption)
+                Text("Greyscale dE ${pair(Analysis.greyAverage(a, flow.hdr), b?.let { Analysis.greyAverage(it, flow.hdr) })}" +
+                    "  ·  colours dE ${pair(Analysis.colourAverage(a), b?.let { Analysis.colourAverage(it) })}",
+                    style = TcType.small.copy(color = Tc.textSecondary, fontFeatureSettings = "tnum"))
+            }
+        }
+    }
 }
