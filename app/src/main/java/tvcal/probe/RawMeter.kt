@@ -102,7 +102,7 @@ class RawMeter(private val manager: CameraManager) {
     var onError: ((String) -> Unit)? = null
 
     /** Works out the locked settings for a camera without opening it. Throws if it can't be a meter. */
-    fun plan(cameraId: String, imported: Pair<DngColourData, String>? = null): Setup {
+    fun plan(cameraId: String, imported: Pair<DngColourData, String>? = null, whiteRef: Vec3? = null): Setup {
         val ch = manager.getCameraCharacteristics(cameraId)
         require(CameraFacts.hasRaw(ch)) { "Camera $cameraId has no RAW output." }
         require(CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR in CameraFacts.capabilities(ch)) {
@@ -115,11 +115,15 @@ class RawMeter(private val manager: CameraManager) {
                 Triple(DngColour.cameraToXYZ(data, DngMethod.FORWARD_MATRIX), DngColour.cameraToXYZ(data, DngMethod.COLOR_MATRIX), name)
             }.getOrNull()
         }
-        val (forward, colour, colourSource) = when {
+        val (forward0, colour0, source0) = when {
             sensor != null -> Triple(sensor.first, sensor.second, "Camera2 sensor matrices")
             fromDng != null -> Triple(fromDng.first, fromDng.second, "DNG ${fromDng.third}")
             else -> Triple(null, null, "none (raw ratios only)")
         }
+        // A white the user told us is D65 (a TV in its Filmmaker / Cinema mode) corrects the matrices' bias.
+        val forward = whiteRef?.let { w -> forward0?.let { runCatching { it.whiteBalanced(w) }.getOrNull() } } ?: forward0
+        val colour = whiteRef?.let { w -> colour0?.let { runCatching { it.whiteBalanced(w) }.getOrNull() } } ?: colour0
+        val colourSource = if (whiteRef != null && forward0 != null && forward !== forward0) "$source0, white set on a D65 screen" else source0
         val raw = CameraFacts.rawSizes(ch).first()
         val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
         val aspect = raw.width.toDouble() / raw.height

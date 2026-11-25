@@ -97,6 +97,18 @@ class DngColourTests {
         val rgb = ColourMath.matvec(camera, doubleArrayOf(0.95, 1.0, 1.09))
         assertTrue(abs(conv.anchored(rgb, 100.0).apply(rgb)[1] - 100.0) < 1e-9)
     }
+
+    @Test
+    fun whiteReferenceReadsD65AndKeepsBrightness() {
+        val conv = DngColour.cameraToXYZ(perfectCamera(true))
+        // a magenta-ish white as the camera sees it
+        val ref = ColourMath.matvec(camera, doubleArrayOf(0.98, 0.93, 1.10))
+        val fixed = conv.whiteBalanced(ref)
+        val xyz = fixed.apply(ref)
+        val xy = ColourMath.xyzToXY(xyz)
+        assertTrue(abs(xy.x - ColourMath.d65.x) < 1e-9 && abs(xy.y - ColourMath.d65.y) < 1e-9, "$xy")
+        assertTrue(abs(xyz[1] - conv.apply(ref)[1]) < 1e-9)
+    }
 }
 
 class RawAnalysisTests {

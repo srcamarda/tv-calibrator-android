@@ -158,6 +158,9 @@ fun LiveScreen() {
 
     // readings of the current pattern (cleared when the pattern, the source or the mode changes)
     val readings = remember { ArrayList<Vec3>() }
+    /** Camera RGB per second of the same readings, for setting the white reference. */
+    val rgbs = remember { ArrayList<Vec3>() }
+    var whiteVersion by remember { mutableIntStateOf(0) }
     var live by remember { mutableStateOf<LiveReading?>(null) }
     var restart by remember { mutableIntStateOf(0) }
     /** The brightness of 100% white, per source: colours and the mismatch check are judged against it. */
@@ -165,12 +168,14 @@ fun LiveScreen() {
     /** The last settled reading of each pattern: red, green and blue make the colour hints exact. */
     val settled = remember { mutableStateMapOf<String, Vec3>() }
 
-    LaunchedEffect(patchId, source, hdr, restart) { readings.clear(); live = null; error = null }
+    LaunchedEffect(patchId, source, hdr, restart, whiteVersion) { readings.clear(); rgbs.clear(); live = null; error = null }
     LaunchedEffect(source, hdr) { settled.clear() }
     LaunchedEffect(hdr) { whiteY.clear() }
 
-    val plan = remember { runCatching { CameraFacts.meterCameras(manager).first().let { meter.plan(it, loadImported(context, it)) } } }
-    LaunchedEffect(source, granted, surface, reopen) {
+    val plan = remember(whiteVersion) {
+        runCatching { CameraFacts.meterCameras(manager).first().let { meter.plan(it, loadImported(context, it), loadWhiteRef(context, it)) } }
+    }
+    LaunchedEffect(source, granted, surface, reopen, whiteVersion) {
         if (source != Source.CAMERA || !granted) return@LaunchedEffect
         val s = surface ?: return@LaunchedEffect
         val p = plan.getOrElse { error = "No camera on this phone can be a meter: ${it.message}"; return@LaunchedEffect }
@@ -186,7 +191,7 @@ fun LiveScreen() {
 
     // the reading loop
     val demoMeter = remember(tv) { SimLiveMeter(tv, shown) }
-    LaunchedEffect(running, source, cameraReady, patchId, hdr, restart) {
+    LaunchedEffect(running, source, cameraReady, patchId, hdr, restart, whiteVersion) {
         if (!running) return@LaunchedEffect
         if (source == Source.CAMERA && !cameraReady) return@LaunchedEffect
         if (source == Source.DEMO && whiteY[Source.DEMO] == null) {
@@ -195,10 +200,11 @@ fun LiveScreen() {
         while (isActive) {
             val xyz: Vec3 = runCatching {
                 if (source == Source.DEMO) demoMeter.read().xyz ?: error("no reading")
-                else meter.measure().let { r -> r.xyzForward ?: r.xyzColour ?: error("no colour matrices") }
+                else meter.measure().let { r -> rgbs += r.rgbPerSecond; r.xyzForward ?: r.xyzColour ?: error("no colour matrices") }
             }.getOrElse { error = "The reading failed: ${it.message}"; break }
             readings += xyz
             if (readings.size > 40) readings.removeAt(0)
+            if (rgbs.size > 40) rgbs.removeAt(0)
             val wY = if (hdr) null else whiteY[source]
             val basis = listOf("RED", "GREEN", "BLUE").mapNotNull { settled[it] }.takeIf { it.size == 3 }
             val r = Guided.evaluate(patch, readings, hdr, wY, basis)
@@ -259,10 +265,25 @@ fun LiveScreen() {
             }
 
             androidx.compose.runtime.key(tvVersion) {
-                if (isColour) ColourStep(patch, hdr, live, error, source == Source.DEMO, whiteY[source] != null || hdr,
+                if (isColour) ColourStep(patch, hdr, live, error, source == Source.DEMO, whiteY[source], 
                     onPick = { patchId = it }, onRestart = { restart++ }, onPress = { k, d -> tv.apply(mapOf(k to d)); tvVersion++ })
-                else WhiteBalanceStep(patch, hdr, live, error, source == Source.DEMO,
+                else WhiteBalanceStep(patch, hdr, live, error, source == Source.DEMO, whiteY[source],
                     onRestart = { restart++ }, onPress = { k, d -> tv.apply(mapOf(k to d)); tvVersion++ })
+                val cam = plan.getOrNull()
+                if (source == Source.CAMERA && cam != null && patch.kind == PatchKind.WHITE && !hdr) {
+                    WhiteReference(
+                        isSet = loadWhiteRef(context, cam.cameraId) != null,
+                        canSet = live?.let { it.mismatch == null && it.averaged >= it.need } == true && rgbs.isNotEmpty(),
+                        onSet = {
+                            val n = minOf(live?.averaged ?: 1, rgbs.size)
+                            val tail = rgbs.takeLast(n)
+                            saveWhiteRef(context, cam.cameraId, DoubleArray(3) { c -> tail.sumOf { it[c] } / n })
+                            whiteY.remove(Source.CAMERA)
+                            whiteVersion++
+                        },
+                        onForget = { whiteRefFile(context, cam.cameraId).delete(); whiteY.remove(Source.CAMERA); whiteVersion++ },
+                    )
+                }
             }
         }
         // the one main action, pinned above the navigation bar
@@ -332,18 +353,22 @@ private fun DemoRemote(controls: List<Pair<String, String>>, onPress: (String, I
 
 /** "This TV's readings wobble…" and "Average of 5 readings · latest 42.1 cd/m²   Restart". */
 @Composable
-private fun AverageLine(r: LiveReading, nits: Boolean, onRestart: () -> Unit) {
+private fun AverageLine(r: LiveReading, nits: Boolean, whiteY: Double?, onRestart: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         if (r.jitter >= 0.004) {
             Text("This TV's readings wobble about ±${fmt(r.jitter * 100)}%, so the bars show an average.",
                 style = TcType.small.copy(color = Tc.textSecondary))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            val unit = if (nits) " cd/m²" else " (camera units)"
+            // the camera has no absolute scale: brightness relative to the 100% white read before
+            val latest = when {
+                nits -> " · latest ${fmt(r.latestY, if (r.latestY < 10) 2 else 1)} cd/m²"
+                whiteY != null && whiteY > 0 -> " · latest ${fmt(r.latestY / whiteY * 100, if (r.latestY / whiteY < 0.1) 2 else 1)}% of white"
+                else -> ""
+            }
             Text(
                 "Average of ${r.averaged} reading${if (r.averaged == 1) "" else "s"}" +
-                    (if (r.averaged < r.need) " (needs ${r.need} to call it steady)" else "") +
-                    " · latest ${fmt(r.latestY, if (r.latestY < 10) 2 else 1)}$unit",
+                    (if (r.averaged < r.need) " (needs ${r.need} to call it steady)" else "") + latest,
                 Modifier.weight(1f), style = TcType.small.copy(color = Tc.textSecondary, fontFeatureSettings = "tnum"),
             )
             LinkButton("Restart", onRestart, small = true)
@@ -372,7 +397,7 @@ private fun ReadingProblems(error: String?, r: LiveReading?, demo: Boolean): Boo
 
 @Composable
 private fun WhiteBalanceStep(
-    patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean,
+    patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean, whiteY: Double?,
     onRestart: () -> Unit, onPress: (String, Int) -> Unit,
 ) {
     val gain = isGain(patch, hdr)
@@ -395,7 +420,7 @@ private fun WhiteBalanceStep(
     if (demo) DemoRemote(listOf("Red $control" to (if (gain) "gain:R" else "offset:R"), "Blue $control" to (if (gain) "gain:B" else "offset:B")), onPress)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("TV menu: ${Lg.WHITE_BALANCE}", style = TcType.small.copy(color = Tc.textSecondary))
-        valid?.let { AverageLine(it, demo || hdr, onRestart) }
+        valid?.let { AverageLine(it, demo || hdr, whiteY, onRestart) }
     }
 }
 
@@ -422,7 +447,7 @@ private fun BigWhiteTarget(r: LiveReading) {
 
 @Composable
 private fun ColourStep(
-    patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean, haveWhite: Boolean,
+    patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean, whiteY: Double?,
     onPick: (String) -> Unit, onRestart: () -> Unit, onPress: (String, Int) -> Unit,
 ) {
     val name = capital(patch.id)
@@ -432,7 +457,7 @@ private fun ColourStep(
     Row(Modifier.fillMaxWidth()) {
         for (c in Patterns.colourIDs) ColourChip(c, c == patch.id, { onPick(c) }, Modifier.weight(1f))
     }
-    if (!haveWhite) TipRow(Tone.LIMIT, "Read 100% white first, so brightness can be judged against this TV's own white.")
+    if (whiteY == null && !hdr) TipRow(Tone.LIMIT, "Read 100% white first, so brightness can be judged against this TV's own white.")
     val valid = r?.takeIf { it.id == patch.id }
     if (!ReadingProblems(error, valid, demo) && valid != null) {
         valid.tuv?.let { t ->
@@ -452,7 +477,7 @@ private fun ColourStep(
                 caption = if ((valid.lum ?: 0.0) > 0) "Too bright: lower ${Lg.BRIGHTNESS}" else "Too dim: raise ${Lg.BRIGHTNESS}")
             BalanceScaleLabels()
         }
-        AverageLine(valid, demo || hdr, onRestart)
+        AverageLine(valid, demo || hdr, whiteY, onRestart)
         when {
             valid.steady -> TipRow(Tone.OK, "$name is on target. Nice.")
             valid.ok -> TipRow(Tone.OK, "Close enough - holding steady…")
@@ -464,4 +489,27 @@ private fun ColourStep(
         "$name ${Lg.BRIGHTNESS}" to "hsl:${patch.id}:lum",
     ), onPress)
     Text("TV menu: ${Lg.COLOUR_MENU} › $name", style = TcType.small.copy(color = Tc.textSecondary))
+}
+
+/**
+ * The camera's matrices are generic, and on a TV's narrow-band light they can be a few percent off in
+ * colour. A white that is known to be D65 - the TV's Filmmaker / Cinema mode, set at the factory - lets the
+ * app correct them for this camera and this kind of screen.
+ */
+@Composable
+private fun WhiteReference(isSet: Boolean, canSet: Boolean, onSet: () -> Unit, onForget: () -> Unit) {
+    TcCard(spacing = 8.dp) {
+        Text("Camera colour reference", style = TcType.bodyStrong)
+        if (isSet) {
+            Text("This camera's colours are corrected to a white you marked as D65. Readings of that same picture mode " +
+                "now land in the ring; other modes are measured against it.", style = TcType.caption.copy(color = Tc.textSecondary))
+            LinkButton("Forget the reference", onForget, small = true)
+        } else {
+            Text("Only on a white that really is D65: the TV in Filmmaker Mode (or Cinema / Expert), with its colour " +
+                "temperature at the default (Warm 50 on LG). The camera's colour is then corrected to it.",
+                style = TcType.caption.copy(color = Tc.textSecondary))
+            tvcal.probe.ui.SecondaryButton(if (canSet) "Use this white as D65" else "Wait for a steady reading", onSet,
+                Modifier.fillMaxWidth(), enabled = canSet)
+        }
+    }
 }

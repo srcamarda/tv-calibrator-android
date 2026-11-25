@@ -93,10 +93,10 @@ class MainActivity : ComponentActivity() {
 private fun App(modifier: Modifier) {
     var tab by remember { mutableIntStateOf(0) }
     Column(modifier.fillMaxSize()) {
-        PrimaryTabRow(selectedTabIndex = tab) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Camera report") })
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Measure") })
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Live") })
+        PrimaryTabRow(selectedTabIndex = tab, containerColor = Tc.background) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Camera report") }, selectedContentColor = Color.White, unselectedContentColor = Tc.textSecondary)
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Measure") }, selectedContentColor = Color.White, unselectedContentColor = Tc.textSecondary)
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Live") }, selectedContentColor = Color.White, unselectedContentColor = Tc.textSecondary)
         }
         when (tab) {
             0 -> ReportScreen()
@@ -118,6 +118,17 @@ internal fun hasCamera(context: Context) =
 
 /** Colour matrices imported from a DNG, per camera id. */
 internal fun importedFile(context: Context, cameraId: String) = File(outDir(context, "colour"), "camera-$cameraId.txt")
+
+/** The camera RGB of a white the user said is D65, per camera id (see [RawMeter.plan]). */
+internal fun whiteRefFile(context: Context, cameraId: String) = File(outDir(context, "colour"), "white-$cameraId.txt")
+
+internal fun loadWhiteRef(context: Context, cameraId: String): DoubleArray? = runCatching {
+    whiteRefFile(context, cameraId).takeIf { it.exists() }?.readText()?.trim()?.split(" ")?.map { it.toDouble() }
+        ?.takeIf { it.size == 3 }?.toDoubleArray()
+}.getOrNull()
+
+internal fun saveWhiteRef(context: Context, cameraId: String, rgb: DoubleArray) =
+    whiteRefFile(context, cameraId).writeText(rgb.joinToString(" ") { it.toString() })
 
 internal fun loadImported(context: Context, cameraId: String): Pair<DngColourData, String>? =
     importedFile(context, cameraId).takeIf { it.exists() }
@@ -240,7 +251,7 @@ private fun MeasureScreen() {
     var importedVersion by remember { mutableIntStateOf(0) }
 
     val plan = remember(cameraId, importedVersion) {
-        runCatching { meter.plan(cameraId, loadImported(context, cameraId)) }
+        runCatching { meter.plan(cameraId, loadImported(context, cameraId), loadWhiteRef(context, cameraId)) }
     }
     val pickDng = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult

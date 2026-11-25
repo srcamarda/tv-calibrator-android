@@ -44,6 +44,20 @@ data class CameraToXYZ(val matrix: Mat3, val method: DngMethod, val scale: Doubl
         require(y > 0) { "the reference reads no light" }
         return copy(scale = nits / y)
     }
+
+    /**
+     * The same conversion, corrected so that `ref` (camera RGB of a white known to be at `white`) reads
+     * exactly that white at the same brightness: a per-channel gain in camera space, like a camera's own
+     * white balance. Fixes the bias of the generic matrices toward this kind of screen's white.
+     */
+    fun whiteBalanced(ref: Vec3, white: Point2 = ColourMath.d65): CameraToXYZ {
+        val y = ColourMath.matvec(matrix, ref)[1]
+        require(y > 0 && ref.all { it > 0 }) { "the reference reads no light" }
+        val want = ColourMath.solve3(matrix, ColourMath.xyYToXYZ(white, y))
+        val gains = DoubleArray(3) { want[it] / ref[it] }
+        require(gains.all { it.isFinite() && it > 0 }) { "the reference white can't be reached from this camera's matrix" }
+        return copy(matrix = ColourMath.matmul(matrix, ColourMath.diag(gains)))
+    }
 }
 
 object DngColour {
