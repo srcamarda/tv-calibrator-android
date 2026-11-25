@@ -16,7 +16,7 @@ colorimeter (or against an iPhone that already has one) can replace it later.
 | Module | What it is |
 |---|---|
 | `calibrationkit/` | Pure Kotlin, no Android: a port of upstream's `CalibrationKit` (colour maths, pattern timelines, video sync and sweep, analysis, guided live readings, point finder, simulated TV) plus the DNG-matrix conversion and the RAW centre-box analysis. Tested against upstream's fixtures (recorded from the Mac app's Python engine, copied under `src/test/resources/fixtures`). Upstream's `AutoCalibration` isn't ported: the app doesn't use it. |
-| `app/` | **TV Cal Probe**: a camera report (can this phone be a meter?), a RAW measuring screen, and a **Live** reading view (white balance / colour error bars, plain-language advice, steady detection) that runs on the camera or on a built-in demo TV. Screens use upstream's design system (colours, type scale and live-step components from its `DesignSystem.swift` / `Components.swift`), ported in `app/.../ui/Theme.kt`. |
+| `app/` | **TV Cal Probe**. *Calibrate*: the guided calibration as in upstream (Set up → Before → Bright end → Dark end → Check → Colours → After), on the camera or a built-in demo TV. *Live*: one pattern read live. *Measure* and *Camera*: RAW measuring and the camera report, for diagnosis. Screens use upstream's design system, ported in `app/.../ui/Theme.kt`. |
 
 ### Camera report
 
@@ -56,10 +56,18 @@ You need JDK 25 and the Android SDK with platform 37.
 ./gradlew :app:assembleDebug        # app/build/outputs/apk/debug/app-debug.apk
 ```
 
+## Patterns for the TV
+
+- **Before, Check and After** follow upstream's Quick check video, with its sync flashes: play
+  [SDR 00 - Quick check](https://youtu.be/jGk6o8bytjY) on the TV's YouTube app, from the start.
+- **The adjustment steps** show one still pattern at a time: copy `patterns/pack/` to a USB stick and open
+  the pictures in the TV's photo viewer. They're named like upstream's pattern videos and use the same
+  window (10% of the screen). Made by `tools/make_pattern_pack.py`.
+
 ## Next steps
 
-1. Run the probe on real phones (first: Galaxy S25+), save the camera report, and check the readings
-   are repeatable on a TV.
-2. Build the guided calibration steps (Setup → Before → Gain → Offset → Check → Colours → After) on the Live tab's reading view.
+1. Run the guided flow with the camera on a real TV (first: Galaxy S25+ and an LG), and check the
+   Quick check video syncs with the RAW meter's pace.
+2. Keep the calibration between launches, and add upstream's other brands, HDR10 and fine-tuning.
 3. Real camera profiles: a Lab mode that pairs with upstream's `mac-lab` tool, with a colorimeter or
    a profiled iPhone as the reference.

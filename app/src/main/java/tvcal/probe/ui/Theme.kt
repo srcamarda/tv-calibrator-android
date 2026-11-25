@@ -528,7 +528,7 @@ fun GamutChart(dots: List<GamutDot>, hdr: Boolean, modifier: Modifier = Modifier
 
 /** One of the six colours: yellow ring when it's the one on screen, a dot in its own colour otherwise. */
 @Composable
-fun ColourChip(id: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun ColourChip(id: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, done: Boolean = false) {
     val c = Tc.swatch(id)
     Column(modifier.clickable(onClick = onClick).padding(vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -536,7 +536,11 @@ fun ColourChip(id: String, selected: Boolean, onClick: () -> Unit, modifier: Mod
             val r = size.minDimension / 2
             drawCircle(if (selected) c.copy(alpha = 0.15f) else Tc.card, r)
             drawCircle(if (selected) Tc.accent else c, r - 0.75.dp.toPx(), style = Stroke(1.5.dp.toPx()))
-            drawCircle(c, 2.5.dp.toPx())
+            if (done) {
+                val u = r / 16f
+                drawPath(Path().apply { moveTo(center.x - 5 * u, center.y); lineTo(center.x - 1.5f * u, center.y + 4 * u); lineTo(center.x + 6 * u, center.y - 4.5f * u) },
+                    c, style = Stroke(1.8.dp.toPx(), cap = StrokeCap.Round))
+            } else drawCircle(c, 2.5.dp.toPx())
         }
         Text(id.lowercase().replaceFirstChar { it.uppercase() }, style = TcType.micro.copy(color = if (selected) Color.White else Tc.textSecondary), maxLines = 1)
     }

@@ -329,3 +329,26 @@ class RawMeter(private val manager: CameraManager) {
         thread.quitSafely()
     }
 }
+
+/**
+ * The RAW meter as a [tvcal.kit.Meter], for following a pattern video (Before / Check / After). One
+ * reading is one [RawMeter.measure]: its light was captured during the last photo, which ends shortly
+ * before the reading does.
+ */
+class CameraMeter(private val raw: RawMeter) : tvcal.kit.Meter {
+    @Volatile private var lastExposure = 0.05
+
+    override val integration: Double get() = lastExposure / 2 + 0.05
+    override fun now(): Double = tvcal.kit.MeterClock.now()
+    override suspend fun sleep(seconds: Double) = tvcal.kit.MeterClock.sleep(seconds)
+
+    override suspend fun read(): tvcal.kit.MeterReading {
+        val r = raw.measure()
+        val end = now()
+        lastExposure = r.exposureNs / 1e9
+        // the photo that counted, not the exposure search before it
+        val start = end - lastExposure - 0.1
+        val xyz = r.xyzForward ?: r.xyzColour
+        return tvcal.kit.MeterReading(start, end, xyz?.takeIf { !r.stats.clipped })
+    }
+}

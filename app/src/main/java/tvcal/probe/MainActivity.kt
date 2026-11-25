@@ -91,17 +91,23 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun App(modifier: Modifier) {
+    val context = LocalContext.current
     var tab by remember { mutableIntStateOf(0) }
+    // the guided calibration outlives a trip to the other tabs
+    val flow = remember { GuidedFlow(context, context.getSystemService(CameraManager::class.java)) }
+    DisposableEffect(Unit) { onDispose { flow.raw.release() } }
     Column(modifier.fillMaxSize()) {
         PrimaryTabRow(selectedTabIndex = tab, containerColor = Tc.background) {
-            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Camera report") }, selectedContentColor = Color.White, unselectedContentColor = Tc.textSecondary)
-            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Measure") }, selectedContentColor = Color.White, unselectedContentColor = Tc.textSecondary)
-            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Live") }, selectedContentColor = Color.White, unselectedContentColor = Tc.textSecondary)
+            for ((i, name) in listOf("Calibrate", "Live", "Measure", "Camera").withIndex()) {
+                Tab(selected = tab == i, onClick = { tab = i }, text = { Text(name, maxLines = 1) },
+                    selectedContentColor = Color.White, unselectedContentColor = Tc.textSecondary)
+            }
         }
         when (tab) {
-            0 -> ReportScreen()
-            1 -> MeasureScreen()
-            else -> LiveScreen()
+            0 -> GuidedScreen(flow)
+            1 -> LiveScreen()
+            2 -> MeasureScreen()
+            else -> ReportScreen()
         }
     }
 }

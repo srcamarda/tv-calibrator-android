@@ -88,7 +88,7 @@ import tvcal.probe.ui.fmt
 private enum class Source { DEMO, CAMERA }
 
 /** The TV's menu names. LG only for now (the first supported TV); upstream's Brands.swift has the rest. */
-private object Lg {
+internal object Lg {
     const val GAIN = "Gain"
     const val OFFSET = "Offset"
     const val WHITE_BALANCE = "Picture › Advanced Settings › Colour › White Balance (set it to 2 Point)"
@@ -98,7 +98,7 @@ private object Lg {
     const val BRIGHTNESS = "Luminance"
 }
 
-private fun capital(id: String) = id.lowercase().replaceFirstChar { it.uppercase() }
+internal fun capital(id: String) = id.lowercase().replaceFirstChar { it.uppercase() }
 
 /** The patches the live view can ask for: white, greys from bright to dark, then the colours. */
 private fun livePatches(hdr: Boolean): List<Patch> {
@@ -108,12 +108,12 @@ private fun livePatches(hdr: Boolean): List<Patch> {
 }
 
 /** "50% grey", "100% white", "Red 75%". */
-private fun shortName(p: Patch): String =
+internal fun shortName(p: Patch): String =
     if (p.kind == PatchKind.COLOUR) capital(p.name)
     else p.name.replace("% GREY", "% grey").replace("100% WHITE", "100% white").replace("100 nit WHITE", "100 nit white")
 
 /** Which white-balance pair moves this grey: gain at the bright end, offset at the dark end. */
-private fun isGain(p: Patch, hdr: Boolean): Boolean {
+internal fun isGain(p: Patch, hdr: Boolean): Boolean {
     val plan = GuidePlan.forHDR(hdr)
     val gain = Patterns.patch(hdr, plan.gain)?.level ?: 1.0
     val off = Patterns.patch(hdr, plan.offset)?.level ?: 0.3
@@ -295,7 +295,7 @@ fun LiveScreen() {
 
 /** The camera preview, with the box the reading averages (the centre 10%). */
 @Composable
-private fun Viewfinder(bufferSize: Pair<Int, Int>?, aspect: Float, onSurface: (Surface) -> Unit, onGone: () -> Unit) {
+internal fun Viewfinder(bufferSize: Pair<Int, Int>?, aspect: Float, onSurface: (Surface) -> Unit, onGone: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.fillMaxWidth().height(240.dp).clip(RoundedCornerShape(18.dp)).background(Tc.previewFill),
             contentAlignment = Alignment.Center) {
@@ -330,7 +330,7 @@ private fun Viewfinder(bufferSize: Pair<Int, Int>?, aspect: Float, onSurface: (S
 
 /** Demo TVs: what the readings are, in place of the pattern to show. */
 @Composable
-private fun DemoNote() {
+internal fun DemoNote() {
     TcCard(hero = true, spacing = 4.dp) {
         Text("Demo · simulated readings", style = TcType.captionStrong.copy(color = Tc.accent))
         Text("Try the remote buttons below.", style = TcType.small.copy(color = Tc.textSecondary))
@@ -339,7 +339,7 @@ private fun DemoNote() {
 
 /** Demo TVs only: − / + buttons that stand in for the TV's menus. */
 @Composable
-private fun DemoRemote(controls: List<Pair<String, String>>, onPress: (String, Int) -> Unit) {
+internal fun DemoRemote(controls: List<Pair<String, String>>, onPress: (String, Int) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for ((label, key) in controls) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -353,7 +353,7 @@ private fun DemoRemote(controls: List<Pair<String, String>>, onPress: (String, I
 
 /** "This TV's readings wobble…" and "Average of 5 readings · latest 42.1 cd/m²   Restart". */
 @Composable
-private fun AverageLine(r: LiveReading, nits: Boolean, whiteY: Double?, onRestart: () -> Unit) {
+internal fun AverageLine(r: LiveReading, nits: Boolean, whiteY: Double?, onRestart: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         if (r.jitter >= 0.004) {
             Text("This TV's readings wobble about ±${fmt(r.jitter * 100)}%, so the bars show an average.",
@@ -378,7 +378,7 @@ private fun AverageLine(r: LiveReading, nits: Boolean, whiteY: Double?, onRestar
 
 /** An error, the wait for the first reading, or the wrong pattern. True when there's nothing to show. */
 @Composable
-private fun ReadingProblems(error: String?, r: LiveReading?, demo: Boolean): Boolean {
+internal fun ReadingProblems(error: String?, r: LiveReading?, demo: Boolean): Boolean {
     error?.let { TipRow(Tone.LIMIT, it) }
     if (r == null) {
         if (error == null) WaitingForReading(
@@ -396,7 +396,7 @@ private fun ReadingProblems(error: String?, r: LiveReading?, demo: Boolean): Boo
 // MARK: white and greys
 
 @Composable
-private fun WhiteBalanceStep(
+internal fun WhiteBalanceStep(
     patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean, whiteY: Double?,
     onRestart: () -> Unit, onPress: (String, Int) -> Unit,
 ) {
@@ -429,7 +429,7 @@ private fun WhiteBalanceStep(
  * centre). The main thing to watch while adjusting.
  */
 @Composable
-private fun BigWhiteTarget(r: LiveReading) {
+internal fun BigWhiteTarget(r: LiveReading) {
     Row(Modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
         WhiteTarget(r.uv, r.d65uv, r.ok, Modifier.size(150.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -446,16 +446,17 @@ private fun BigWhiteTarget(r: LiveReading) {
 // MARK: colours
 
 @Composable
-private fun ColourStep(
+internal fun ColourStep(
     patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean, whiteY: Double?,
     onPick: (String) -> Unit, onRestart: () -> Unit, onPress: (String, Int) -> Unit,
+    doneColours: Set<String> = emptySet(),
 ) {
     val name = capital(patch.id)
     val colour = Tc.swatch(patch.id)
     if (demo) DemoNote()
     Text("Bring $name onto its ring", style = TcType.stepTitle)
     Row(Modifier.fillMaxWidth()) {
-        for (c in Patterns.colourIDs) ColourChip(c, c == patch.id, { onPick(c) }, Modifier.weight(1f))
+        for (c in Patterns.colourIDs) ColourChip(c, c == patch.id, { onPick(c) }, Modifier.weight(1f), done = c in doneColours)
     }
     if (whiteY == null && !hdr) TipRow(Tone.LIMIT, "Read 100% white first, so brightness can be judged against this TV's own white.")
     val valid = r?.takeIf { it.id == patch.id }
@@ -497,7 +498,7 @@ private fun ColourStep(
  * app correct them for this camera and this kind of screen.
  */
 @Composable
-private fun WhiteReference(isSet: Boolean, canSet: Boolean, onSet: () -> Unit, onForget: () -> Unit) {
+internal fun WhiteReference(isSet: Boolean, canSet: Boolean, onSet: () -> Unit, onForget: () -> Unit) {
     TcCard(spacing = 8.dp) {
         Text("Camera colour reference", style = TcType.bodyStrong)
         if (isSet) {
