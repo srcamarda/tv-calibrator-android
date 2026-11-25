@@ -16,7 +16,7 @@ colorimeter (or against an iPhone that already has one) can replace it later.
 | Module | What it is |
 |---|---|
 | `calibrationkit/` | Pure Kotlin, no Android: a port of upstream's `CalibrationKit` (colour maths, pattern timelines, video sync and sweep, analysis, guided live readings, point finder, simulated TV) plus the DNG-matrix conversion and the RAW centre-box analysis. Tested against upstream's fixtures (recorded from the Mac app's Python engine, copied under `src/test/resources/fixtures`). Upstream's `AutoCalibration` isn't ported: the app doesn't use it. |
-| `app/` | **TV Cal Probe**: a camera report (can this phone be a meter?), a RAW measuring screen, and a **Live** reading view (white balance / colour error bars, plain-language advice, steady detection) that runs on the camera or on a built-in demo TV. |
+| `app/` | **TV Cal Probe**: a camera report (can this phone be a meter?), a RAW measuring screen, and a **Live** reading view (white balance / colour error bars, plain-language advice, steady detection) that runs on the camera or on a built-in demo TV. Screens use upstream's design system (colours, type scale and live-step components from its `DesignSystem.swift` / `Components.swift`), ported in `app/.../ui/Theme.kt`. |
 
 ### Camera report
 

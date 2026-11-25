@@ -31,14 +31,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -63,6 +61,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tvcal.kit.ColourMath
+import tvcal.probe.ui.Tc
+import tvcal.probe.ui.TcTheme
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -82,8 +82,8 @@ class MainActivity : ComponentActivity() {
         // The phone sits on a stand measuring; don't let the screen sleep.
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                Scaffold { pad -> App(Modifier.padding(pad)) }
+            TcTheme {
+                Scaffold(containerColor = Tc.background) { pad -> App(Modifier.padding(pad)) }
             }
         }
     }
@@ -435,7 +435,7 @@ private fun MeasureScreen() {
                 val w = size.width * 0.1f
                 val h = size.height * 0.1f
                 drawRect(
-                    Color.Yellow, topLeft = Offset(size.width / 2 - w / 2, size.height / 2 - h / 2),
+                    Tc.accent, topLeft = Offset(size.width / 2 - w / 2, size.height / 2 - h / 2),
                     size = androidx.compose.ui.geometry.Size(w, h), style = Stroke(3f),
                 )
             }
@@ -491,7 +491,7 @@ private fun MeasureScreen() {
         Text(
             "Readings use the camera's own colour matrices or a DNG's (no colorimeter profile): approximate, best for " +
                 "greys and the white point.",
-            Modifier.padding(top = 8.dp), fontSize = 11.sp, color = Color.Gray,
+            Modifier.padding(top = 8.dp), fontSize = 11.sp, color = Tc.textSecondary,
         )
         Text(output, Modifier.padding(top = 8.dp), fontFamily = FontFamily.Monospace, fontSize = 11.sp)
     }
