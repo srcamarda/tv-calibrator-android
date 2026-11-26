@@ -87,17 +87,6 @@ import tvcal.probe.ui.fmt
 
 private enum class Source { DEMO, CAMERA }
 
-/** The TV's menu names. LG only for now (the first supported TV); upstream's Brands.swift has the rest. */
-internal object Lg {
-    const val GAIN = "Gain"
-    const val OFFSET = "Offset"
-    const val WHITE_BALANCE = "Picture › Advanced Settings › Colour › White Balance (set it to 2 Point)"
-    const val COLOUR_MENU = "Picture › Advanced Settings › Colour › Colour Management System"
-    const val HUE = "Tint"
-    const val SATURATION = "Saturation"
-    const val BRIGHTNESS = "Luminance"
-}
-
 internal fun capital(id: String) = id.lowercase().replaceFirstChar { it.uppercase() }
 
 /** The patches the live view can ask for: white, greys from bright to dark, then the colours. */
@@ -122,7 +111,7 @@ internal fun isGain(p: Patch, hdr: Boolean): Boolean {
 }
 
 @Composable
-fun LiveScreen() {
+fun LiveScreen(brand: Brand = Brand.LG, colourMenu: ColourMenu = brand.colourMenu) {
     val context = LocalContext.current
     var source by remember { mutableStateOf(Source.DEMO) }
     var hdr by remember { mutableStateOf(false) }
@@ -266,9 +255,10 @@ fun LiveScreen() {
 
             androidx.compose.runtime.key(tvVersion) {
                 if (isColour) ColourStep(patch, hdr, live, error, source == Source.DEMO, whiteY[source], 
-                    onPick = { patchId = it }, onRestart = { restart++ }, onPress = { k, d -> tv.apply(mapOf(k to d)); tvVersion++ })
+                    onPick = { patchId = it }, onRestart = { restart++ }, onPress = { k, d -> tv.apply(mapOf(k to d)); tvVersion++ },
+                    brand = brand, menu = colourMenu)
                 else WhiteBalanceStep(patch, hdr, live, error, source == Source.DEMO, whiteY[source],
-                    onRestart = { restart++ }, onPress = { k, d -> tv.apply(mapOf(k to d)); tvVersion++ })
+                    onRestart = { restart++ }, onPress = { k, d -> tv.apply(mapOf(k to d)); tvVersion++ }, brand = brand)
                 val cam = plan.getOrNull()
                 if (source == Source.CAMERA && cam != null && patch.kind == PatchKind.WHITE && !hdr) {
                     WhiteReference(
@@ -398,10 +388,10 @@ internal fun ReadingProblems(error: String?, r: LiveReading?, demo: Boolean): Bo
 @Composable
 internal fun WhiteBalanceStep(
     patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean, whiteY: Double?,
-    onRestart: () -> Unit, onPress: (String, Int) -> Unit,
+    onRestart: () -> Unit, onPress: (String, Int) -> Unit, brand: Brand = Brand.LG,
 ) {
     val gain = isGain(patch, hdr)
-    val control = if (gain) Lg.GAIN else Lg.OFFSET
+    val control = if (gain) brand.gainName else brand.offsetName
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Eyebrow(shortName(patch).replaceFirstChar { it.uppercase() })
         Text("Adjust Red and Blue $control", style = TcType.stepTitle)
@@ -419,7 +409,7 @@ internal fun WhiteBalanceStep(
     }
     if (demo) DemoRemote(listOf("Red $control" to (if (gain) "gain:R" else "offset:R"), "Blue $control" to (if (gain) "gain:B" else "offset:B")), onPress)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("TV menu: ${Lg.WHITE_BALANCE}", style = TcType.small.copy(color = Tc.textSecondary))
+        Text("TV menu: ${brand.whiteBalancePath}", style = TcType.small.copy(color = Tc.textSecondary))
         valid?.let { AverageLine(it, demo || hdr, whiteY, onRestart) }
     }
 }
@@ -449,7 +439,7 @@ internal fun BigWhiteTarget(r: LiveReading) {
 internal fun ColourStep(
     patch: Patch, hdr: Boolean, r: LiveReading?, error: String?, demo: Boolean, whiteY: Double?,
     onPick: (String) -> Unit, onRestart: () -> Unit, onPress: (String, Int) -> Unit,
-    doneColours: Set<String> = emptySet(),
+    doneColours: Set<String> = emptySet(), brand: Brand = Brand.LG, menu: ColourMenu = brand.colourMenu,
 ) {
     val name = capital(patch.id)
     val colour = Tc.swatch(patch.id)
@@ -469,15 +459,7 @@ internal fun ColourStep(
                     style = TcType.small.copy(color = Tc.textSecondary, fontFeatureSettings = "tnum"))
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            BalanceBar(Lg.HUE, valid.hue, colour, fullScale = 10.0, tolerance = 2.0, valueText = bigSigned(valid.hue), readingSize = 30,
-                caption = "Leans toward ${valid.toward?.let(::capital) ?: "a neighbour"}: move ${Lg.HUE} a click and keep going the way that shrinks the bar")
-            BalanceBar(Lg.SATURATION, valid.sat, colour, fullScale = 15.0, tolerance = 3.0, valueText = bigSigned(valid.sat), readingSize = 30,
-                caption = if ((valid.sat ?: 0.0) > 0) "Too strong: lower ${Lg.SATURATION}" else "Too weak: raise ${Lg.SATURATION}")
-            BalanceBar(Lg.BRIGHTNESS, valid.lum, colour, fullScale = 25.0, tolerance = 5.0, valueText = bigSigned(valid.lum), readingSize = 30,
-                caption = if ((valid.lum ?: 0.0) > 0) "Too bright: lower ${Lg.BRIGHTNESS}" else "Too dim: raise ${Lg.BRIGHTNESS}")
-            BalanceScaleLabels()
-        }
+        ColourControls(valid, colour, brand, menu)
         AverageLine(valid, demo || hdr, whiteY, onRestart)
         when {
             valid.steady -> TipRow(Tone.OK, "$name is on target. Nice.")
@@ -485,11 +467,19 @@ internal fun ColourStep(
             else -> {}
         }
     }
-    if (demo) DemoRemote(listOf(
-        "$name ${Lg.HUE}" to "hsl:${patch.id}:hue", "$name ${Lg.SATURATION}" to "hsl:${patch.id}:sat",
-        "$name ${Lg.BRIGHTNESS}" to "hsl:${patch.id}:lum",
-    ), onPress)
-    Text("TV menu: ${Lg.COLOUR_MENU} › $name", style = TcType.small.copy(color = Tc.textSecondary))
+    if (demo && menu != ColourMenu.OFF) DemoRemote(
+        if (menu == ColourMenu.RGB_SLIDERS) listOf(
+            "$name Red" to "cms:${patch.id}:R", "$name Green" to "cms:${patch.id}:G", "$name Blue" to "cms:${patch.id}:B",
+        ) else listOf(
+            "$name ${brand.cmsHue}" to "hsl:${patch.id}:hue", "$name ${brand.cmsSaturation}" to "hsl:${patch.id}:sat",
+            "$name ${brand.cmsBrightness}" to "hsl:${patch.id}:lum",
+        ), onPress,
+    )
+    if (menu == ColourMenu.OFF) {
+        Text("No colour controls are set for this TV: just check the colours, or choose its colour menu in Set up.",
+            style = TcType.small.copy(color = Tc.textSecondary))
+    }
+    Text("TV menu: ${brand.colourMenuPath} › $name", style = TcType.small.copy(color = Tc.textSecondary))
 }
 
 /**
@@ -511,6 +501,46 @@ internal fun WhiteReference(isSet: Boolean, canSet: Boolean, onSet: () -> Unit, 
                 style = TcType.caption.copy(color = Tc.textSecondary))
             tvcal.probe.ui.SecondaryButton(if (canSet) "Use this white as D65" else "Wait for a steady reading", onSet,
                 Modifier.fillMaxWidth(), enabled = canSet)
+        }
+    }
+}
+
+/**
+ * The colour menu's controls, drawn like the white-balance bars. Hue / Saturation / Luminance menus get
+ * one bar each; Red / Green / Blue slider menus get the slider moves that bring the colour onto its ring
+ * (upstream's ColoursStep.controlRows).
+ */
+@Composable
+private fun ColourControls(r: LiveReading, colour: Color, brand: Brand, menu: ColourMenu) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        when (menu) {
+            ColourMenu.RGB_SLIDERS -> {
+                val h = r.rgbHint
+                val stuck = r.outOfReach?.channels ?: emptyList()
+                for ((j, label) in listOf("Red", "Green", "Blue").withIndex()) {
+                    // the hint says how far to move the slider (+ raise); drawn as the error (+ too much)
+                    val v = if (h == null || listOf("R", "G", "B")[j] in stuck) null else -h[j] * 100
+                    BalanceBar(label, v, colour, fullScale = 20.0, tolerance = 3.0, valueText = bigSigned(v), readingSize = 30,
+                        caption = v?.let { if (it > 0) "Too much: lower it" else "Too little: raise it" })
+                }
+            }
+            else -> {
+                BalanceBar(brand.cmsHue, r.hue, colour, fullScale = 10.0, tolerance = 2.0, valueText = bigSigned(r.hue), readingSize = 30,
+                    caption = "Leans toward ${r.toward?.let(::capital) ?: "a neighbour"}: move ${brand.cmsHue} a click and keep going the way that shrinks the bar")
+                BalanceBar(brand.cmsSaturation, r.sat, colour, fullScale = 15.0, tolerance = 3.0, valueText = bigSigned(r.sat), readingSize = 30,
+                    caption = if ((r.sat ?: 0.0) > 0) "Too strong: lower ${brand.cmsSaturation}" else "Too weak: raise ${brand.cmsSaturation}")
+                BalanceBar(brand.cmsBrightness, r.lum, colour, fullScale = 25.0, tolerance = 5.0, valueText = bigSigned(r.lum), readingSize = 30,
+                    caption = if ((r.lum ?: 0.0) > 0) "Too bright: lower ${brand.cmsBrightness}" else "Too dim: raise ${brand.cmsBrightness}")
+            }
+        }
+        BalanceScaleLabels()
+    }
+    if (menu == ColourMenu.RGB_SLIDERS) {
+        if (r.rgbApprox) Text("Estimated: the Before check didn't get all three primaries.", style = TcType.small.copy(color = Tc.textSecondary))
+        r.outOfReach?.let { o ->
+            val names = mapOf("R" to "Red", "G" to "Green", "B" to "Blue")
+            TipRow(Tone.LIMIT, "Out of reach: to match exactly, this colour would need ${o.channels.joinToString(" and ") { names.getValue(it) }} " +
+                "below zero, beyond what this TV can mix. The best it can get is about dE ${fmt(o.bestDE)}. When you're there, use Can't get closer.")
         }
     }
 }

@@ -105,7 +105,7 @@ private fun App(modifier: Modifier) {
         }
         when (tab) {
             0 -> GuidedScreen(flow)
-            1 -> LiveScreen()
+            1 -> LiveScreen(flow.brand ?: Brand.LG, flow.colourMenu)
             2 -> MeasureScreen()
             else -> ReportScreen()
         }

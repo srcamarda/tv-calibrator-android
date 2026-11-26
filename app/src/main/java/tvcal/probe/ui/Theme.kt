@@ -210,7 +210,7 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
 /** A text link: teal, semibold. */
 @Composable
 fun LinkButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, small: Boolean = false) {
-    TextButton(onClick, modifier.defaultMinSize(minHeight = 44.dp), contentPadding = PaddingValues(horizontal = 0.dp)) {
+    TextButton(onClick, modifier.defaultMinSize(minWidth = 1.dp, minHeight = 44.dp), contentPadding = PaddingValues(horizontal = 0.dp)) {
         Text(text, style = (if (small) TcType.captionStrong else TcType.bodyStrong).copy(color = Tc.tealBright))
     }
 }

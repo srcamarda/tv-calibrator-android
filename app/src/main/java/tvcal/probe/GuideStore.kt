@@ -34,6 +34,10 @@ data class GuideState(
     /** The demo TV: its seed and the menu changes made on it. */
     val demoSeed: Long = 7,
     val demoCtrl: Map<String, Double> = emptyMap(),
+    /** The TV: its brand (null until chosen) and its menus, when the user changed them from the brand's usual. */
+    val brand: Brand? = null,
+    val colourMenu: ColourMenu? = null,
+    val multipoint: Multipoint? = null,
 )
 
 object GuideStore {
@@ -74,6 +78,9 @@ object GuideStore {
         }))
         put("demoSeed", s.demoSeed)
         put("demoCtrl", JSONObject(s.demoCtrl))
+        s.brand?.let { put("brand", it.name) }
+        s.colourMenu?.let { put("colourMenu", it.name) }
+        s.multipoint?.let { put("multipoint", it.name) }
     }
 
     fun decode(o: JSONObject): GuideState {
@@ -101,6 +108,9 @@ object GuideStore {
             sessions = sessions,
             demoSeed = o.optLong("demoSeed", 7),
             demoCtrl = ctrl,
+            brand = Brand.fromName(o.optString("brand").ifEmpty { null }),
+            colourMenu = ColourMenu.entries.firstOrNull { it.name == o.optString("colourMenu") },
+            multipoint = Multipoint.entries.firstOrNull { it.name == o.optString("multipoint") },
         )
     }
 

@@ -102,13 +102,6 @@ enum class GuideStep(val label: String) {
 /** The Quick check video on Slidebean's YouTube channel (upstream patterns.json). */
 const val QUICK_CHECK_URL = "https://youtu.be/jGk6o8bytjY"
 
-/** Upstream's LG list (Brands.swift), for SDR. */
-private val LG_SDR_SETUP = listOf(
-    "Picture mode: Filmmaker Mode (or Movie / Cinema)",
-    "Energy Saving and AI Brightness: Off",
-    "Gamma: BT.1886, Colour Temperature: Warm 50",
-)
-
 /** Following a pattern video. */
 sealed class SweepPhase {
     object Idle : SweepPhase()
@@ -147,6 +140,16 @@ class GuidedFlow(private val context: Context, private val manager: CameraManage
     var colour by mutableStateOf("RED")
         private set
     private var demoSeed = 7L
+
+    /** The TV's brand: null until chosen (the demo TV starts as an LG). */
+    var brand by mutableStateOf<Brand?>(null)
+        private set
+    private var colourMenuSet by mutableStateOf<ColourMenu?>(null)
+    private var multipointSet by mutableStateOf<Multipoint?>(null)
+    val colourMenu: ColourMenu get() = colourMenuSet ?: (brand ?: Brand.LG).colourMenu
+    val multipoint: Multipoint get() = multipointSet ?: (brand ?: Brand.LG).multipoint
+    /** For sentences and menu names before a brand is chosen. */
+    val brandOrDefault: Brand get() = brand ?: Brand.OTHER
 
     // following a video
     var phase by mutableStateOf<SweepPhase>(SweepPhase.Idle)
@@ -208,6 +211,9 @@ class GuidedFlow(private val context: Context, private val manager: CameraManage
         checkMeas = s.check
         check = s.check?.let { Analysis.analyse(it, hdr) }
         sessions.clear(); sessions += s.sessions
+        brand = s.brand ?: if (demo) Brand.LG else null
+        colourMenuSet = s.colourMenu
+        multipointSet = s.multipoint
         phase = SweepPhase.Idle
         if (demo) {
             demoSeed = s.demoSeed
@@ -222,6 +228,7 @@ class GuidedFlow(private val context: Context, private val manager: CameraManage
             step = step, done = done.toList(), limits = limits.toList(), coloursDone = coloursDone.toList(),
             colour = colour, check = checkMeas, sessions = sessions.toList(),
             demoSeed = demoSeed, demoCtrl = if (demo) tv.s.ctrl.toMap() else emptyMap(),
+            brand = brand, colourMenu = colourMenuSet, multipoint = multipointSet,
         )
         GuideStore.save(context, demo, state)
     }
@@ -234,6 +241,18 @@ class GuidedFlow(private val context: Context, private val manager: CameraManage
         demo = d
         load()
     }
+
+    /** A new brand brings its usual menus back. */
+    fun chooseBrand(b: Brand) {
+        brand = b
+        colourMenuSet = null
+        multipointSet = null
+        save()
+    }
+
+    fun chooseColourMenu(m: ColourMenu) { colourMenuSet = m; save() }
+
+    fun chooseMultipoint(m: Multipoint) { multipointSet = m; save() }
 
     // MARK: moving through the steps
 
@@ -468,7 +487,7 @@ fun GuidedScreen(flow: GuidedFlow) {
         }
         Box(Modifier.fillMaxWidth().background(Tc.background.copy(alpha = 0.96f)).padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 8.dp)) {
             if (flow.running) SecondaryButton("Cancel", { flow.cancel() }, Modifier.fillMaxWidth())
-            else pinned?.let { (title, action) -> PrimaryButton(title, action) }
+            else pinned?.let { (title, action) -> PrimaryButton(title, action, enabled = flow.step != GuideStep.SETUP || flow.brand != null) }
         }
     }
 }
@@ -529,16 +548,18 @@ private fun SetupStep(flow: GuidedFlow, whiteRefSet: Boolean): Pair<String, () -
         Text("The adjustment steps show one still pattern at a time: copy the patterns/pack folder from the project to a " +
             "USB stick and open each picture in the TV's photo viewer.", style = TcType.caption.copy(color = Tc.textSecondary))
     }
+    YourTV(flow)
+    val brand = flow.brandOrDefault
     TcCard(spacing = 8.dp) {
-        Text("Set up the LG", style = TcType.bodyStrong)
+        Text(if (flow.demo) "On a real TV: picture settings" else "Set up the ${brand.shortName}", style = TcType.bodyStrong)
         Text("On the TV, open Picture and match these.", style = TcType.caption.copy(color = Tc.textSecondary))
-        for (item in LG_SDR_SETUP) {
+        for (item in brand.setup(flow.mode)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("•", style = TcType.caption.copy(color = Tc.tealBright))
                 Text(item, style = TcType.caption)
             }
         }
-        Text("Menu names may vary a little by LG model.", style = TcType.small.copy(color = Tc.textSecondary))
+        Text("Menu names may vary a little by ${brand.shortName} model.", style = TcType.small.copy(color = Tc.textSecondary))
     }
     TcCard(spacing = 8.dp) {
         Text("Dim the room", style = TcType.bodyStrong)
@@ -561,6 +582,7 @@ private fun SetupStep(flow: GuidedFlow, whiteRefSet: Boolean): Pair<String, () -
     History(flow)
     val version = remember { runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() }
     Text("TV Cal Probe ${version ?: ""}", Modifier.fillMaxWidth(), style = TcType.tiny.copy(color = Tc.textSecondary))
+    if (flow.brand == null) return "Choose your TV's brand first" to {}
     return "Start: measure the TV as it is" to { flow.go(GuideStep.BEFORE, markDone = GuideStep.SETUP) }
 }
 
@@ -592,6 +614,7 @@ private fun QuickStep(flow: GuidedFlow, which: GuideStep, measure: () -> Unit): 
         val rep = Analysis.analyse(result, flow.hdr)
         if (which == GuideStep.BEFORE) {
             Text("Your starting point", style = TcType.stepTitle)
+            if (!flow.demo) GamutCheck.note(rep, flow.mode, flow.brandOrDefault)?.let { TipRow(Tone.LIMIT, it) }
             ReportSummary(rep, null)
         } else {
             Text("Before and after", style = TcType.stepTitle)
@@ -764,7 +787,7 @@ private fun WhiteStep(flow: GuidedFlow): Pair<String, () -> Unit> {
     if (!flow.demo) PlayCard("Show on the TV", Patterns.packFile(flow.mode, pid) ?: pid, "From the USB stick (patterns/pack).")
     val r = flow.live?.takeIf { it.id == pid }
     WhiteBalanceStep(patch, flow.hdr, r, flow.liveError, flow.demo, flow.whiteY,
-        onRestart = { flow.restart++ }, onPress = flow::press)
+        onRestart = { flow.restart++ }, onPress = flow::press, brand = flow.brandOrDefault)
     LinkButton("Can't get closer", {
         flow.markLimit(if (bright) "bright" else "dark")
         flow.go(if (bright) GuideStep.DARK else GuideStep.CHECK, markDone = flow.step)
@@ -781,11 +804,14 @@ private fun WhiteStep(flow: GuidedFlow): Pair<String, () -> Unit> {
 private fun ColoursStep(flow: GuidedFlow): Pair<String, () -> Unit> {
     val cur = flow.colour
     val patch = Patterns.patch(flow.hdr, cur)!!
-    if (flow.before == null) TipRow(Tone.LIMIT, "Run the Before check first, so brightness can be judged against this TV's own white.")
+    val before = flow.before
+    if (before == null) TipRow(Tone.LIMIT, "Run the Before check first, so brightness can be judged against this TV's own white.")
+    else if (!flow.demo) GamutCheck.note(Analysis.analyse(before, flow.hdr), flow.mode, flow.brandOrDefault)?.let { TipRow(Tone.LIMIT, it) }
     if (!flow.demo) PlayCard("Show on the TV", Patterns.packFile(flow.mode, cur) ?: cur, "From the USB stick (patterns/pack).")
     val r = flow.live?.takeIf { it.id == cur }
     ColourStep(patch, flow.hdr, r, flow.liveError, flow.demo, flow.whiteY,
-        onPick = { flow.pickColour(it) }, onRestart = { flow.restart++ }, onPress = flow::press, doneColours = flow.coloursDone.toSet())
+        onPick = { flow.pickColour(it) }, onRestart = { flow.restart++ }, onPress = flow::press, doneColours = flow.coloursDone.toSet(),
+        brand = flow.brandOrDefault, menu = flow.colourMenu)
     LinkButton("Can't get closer", { flow.markLimit(cur); flow.finishColour(cur) })
     val last = Patterns.colourIDs.all { it == cur || it in flow.coloursDone }
     return (if (last) "Finish colours" else "Next colour") to { flow.finishColour(cur) }
@@ -809,6 +835,54 @@ private fun History(flow: GuidedFlow) {
                     "  ·  colours dE ${pair(Analysis.colourAverage(a), b?.let { Analysis.colourAverage(it) })}",
                     style = TcType.small.copy(color = Tc.textSecondary, fontFeatureSettings = "tnum"))
             }
+        }
+    }
+}
+
+/** The TV: its brand, and the kind of colour and multipoint menus it has (the brand's usual, unless changed). */
+@Composable
+private fun YourTV(flow: GuidedFlow) {
+    var brandOpen by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var pointsOpen by remember { mutableStateOf(false) }
+    TcCard(spacing = 8.dp) {
+        Text(if (flow.demo) "The demo TV" else "Your TV", style = TcType.bodyStrong)
+        if (flow.brand == null) {
+            Text("Which brand is it? Menu names and settings follow it.", style = TcType.caption.copy(color = Tc.textSecondary))
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Brand", Modifier.width(110.dp), style = TcType.caption.copy(color = Tc.textSecondary))
+            Box {
+                LinkButton((flow.brand?.label ?: "Choose") + "  ▾", { brandOpen = true }, small = true)
+                androidx.compose.material3.DropdownMenu(expanded = brandOpen, onDismissRequest = { brandOpen = false }) {
+                    for (b in Brand.entries) androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(b.label, style = TcType.body) }, onClick = { flow.chooseBrand(b); brandOpen = false })
+                }
+            }
+        }
+        if (flow.brand != null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Colour menu", Modifier.width(110.dp), style = TcType.caption.copy(color = Tc.textSecondary))
+                Box {
+                    LinkButton(flow.colourMenu.label + "  ▾", { menuOpen = true }, small = true)
+                    androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        for (m in ColourMenu.entries) androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(m.label, style = TcType.body) }, onClick = { flow.chooseColourMenu(m); menuOpen = false })
+                    }
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Multipoint", Modifier.width(110.dp), style = TcType.caption.copy(color = Tc.textSecondary))
+                Box {
+                    LinkButton(flow.multipoint.label + "  ▾", { pointsOpen = true }, small = true)
+                    androidx.compose.material3.DropdownMenu(expanded = pointsOpen, onDismissRequest = { pointsOpen = false }) {
+                        for (m in Multipoint.entries) androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(m.label, style = TcType.body) }, onClick = { flow.chooseMultipoint(m); pointsOpen = false })
+                    }
+                }
+            }
+            Text("These are the usual menus for ${flow.brandOrDefault.shortName} TVs: check them on yours, under " +
+                "${flow.brandOrDefault.colourMenuPath} and the White Balance menu.", style = TcType.small.copy(color = Tc.textSecondary))
         }
     }
 }

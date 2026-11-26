@@ -3,6 +3,17 @@
 Versions follow `major.minor.patch`, set in `gradle.properties` (`tvcal.version`). Build the APK with
 `./gradlew apk`: it lands in `dist/` as `TV-Cal-Probe-v<version>.apk`.
 
+## 0.2.0
+
+- **Your TV**: choose the brand in the Set up step (LG, Samsung, Sony, TCL, Hisense, Panasonic, Philips,
+  Vizio, Toshiba, Sharp, Roku TV or Other), from upstream's brand list. It sets the picture settings to
+  make, the menu paths, the white-balance names (Gain / Offset, Bias, Cutoff) and the colour menu's names.
+- The colour menu type is the brand's usual (Samsung: Red / Green / Blue sliders; the rest: Hue /
+  Saturation / Luminance) and can be changed, as can the multipoint menu. Red / Green / Blue slider
+  menus get their own bars and the "out of reach" note, as in the iOS app.
+- A gamut check after Before: colours far outside their targets the same way point to a setting.
+- The TV is saved with the calibration; the Live tab follows it.
+
 ## 0.1.0
 
 The first numbered version.
